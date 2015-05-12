@@ -25,8 +25,7 @@ class MiniGraph(object):
         self.edges = {}  # directed edges
         self._edges = {}  # cache for reverse-lookup of directed edges
         self.uedges = {}  # undirected edges
-        for edge in (edges or []):
-            self.add_edge(*edge)
+        self.add_edges(edges or [])
 
     def __getitem__(self, idx):
         """
@@ -62,49 +61,59 @@ class MiniGraph(object):
         return self.nodes[key]
 
     def add_edge(self, start, end, label=None, data=None, directed=True):
-        data = dict(data or [])
+        self.add_edges([(start, end, label, data, directed)])
 
-        self.nodes.setdefault(start, {})
-        self.nodes.setdefault(end, {})
+    def add_edges(self, edges):
+        nodes = self.nodes
 
-        # directed edges have a reverse lookup; undirected edges just put
-        # each edge in the same dict twice
-        if directed is False:
-            edges = self.uedges
-            redges = self.uedges
-        else:
-            edges = self.edges
-            redges = self._edges
+        for edge in edges:
+            edgelen = len(edge)
+            if edgelen == 5:
+                start, end, label, dat, directed = edge
+            elif edgelen == 4:
+                start, end, label, dat = edge; directed = True
+            elif edgelen == 3:
+                start, end, label = edge; dat = None; directed = True
+            elif edgelen == 2:
+                start, end = edge; label = dat = None; directed = True
+            else:
+                raise MiniGraphError('Invalid edge: {}'.format(edge))
 
-        try:
-            edges[start][label][end]
-            redges[end][label][start]
-            raise MiniGraphError(
-                'Edge (or its reverse) already exists: {}->{} ({})'
-                .format(start, end, str(label))
-            )
-        except KeyError:
-            pass
+            data = {}
+            if dat is not None:
+                data.update(dat)
 
-        try:
-            sd = edges[start]
-        except KeyError:
-            edges[start] = {label: {end: data}}
-        else:
-            try:
-                sd[label][end] = data
-            except KeyError:
-                sd[label] = {end: data}
+            if start not in nodes:
+                nodes[start] = {}
+            if end not in nodes:
+                nodes[end] = {}
 
-        try:
-            ed = redges[end]
-        except KeyError:
-            redges[end] = {label: {start: data}}
-        else:
-            try:
-                ed[label][start] = data
-            except KeyError:
-                ed[label] = {start: data}
+            # directed edges have a reverse lookup; undirected edges just put
+            # each edge in the same dict twice
+            if directed is False:
+                edges = self.uedges
+                redges = self.uedges
+            else:
+                edges = self.edges
+                redges = self._edges
+
+            if start not in edges:
+                edges[start] = {label: {end: data}}
+            else:
+                startdict = edges[start]
+                if label not in startdict:
+                    startdict[label] = {end: data}
+                else:
+                    startdict[label][end] = data
+
+            if end not in redges:
+                redges[end] = {label: {start: data}}
+            else:
+                enddict = redges[end]
+                if label not in enddict:
+                    enddict[label] = {start: data}
+                else:
+                    enddict[label][start] = data
 
     def remove_edge(self, start, end, label=None, directed=True):
         # first check for KeyError
@@ -267,7 +276,7 @@ def _prune_edges(graph, nodeid):
                         'Unexpected KeyError while removing {} edge '
                         '({}, {}, {})'
                         .format('directed' if dir_ else 'undirected',
-                                start, end, label),
+                                nodeid, end, lbl),
                         MiniGraphWarning
                     )
         del d1[nodeid]

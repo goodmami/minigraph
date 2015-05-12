@@ -25,10 +25,30 @@ Consider some of the existing Python libraries for graphs:
   - [graph-tool][] is fast, but GPL'd (it's based on the
     [Boost Graph Library][], which has a permissive license, but the
     author of graph-tool [seems uninterested in changing
-    it](https://git.skewed.de/count0/graph-tool/issues/194))
+    graph-tool's license](https://git.skewed.de/count0/graph-tool/issues/194))
   - [NetworKit][] is supposedly fast (though its hard to find any
     benchmarks to support this claim), and there's little documentation
     for building graphs programatically.
+
+### Benchmarks
+
+I compared MiniGraph to NetworkX. It's not directly comparable, because
+the single MiniGraph class can be like NetworkXs Graph, DiGraph,
+MultiGraph, and MultiDiGraph classes. Because of this, I compare it to
+several of them. Here's the current state (times are in seconds):
+
+    Building a chain of 100 nodes 10000 times:
+      MiniGraph (directed) : 1.202720
+      MiniGraph (undir)    : 0.825911
+      NetworkX Graph       : 1.808235
+      NetworkX DiGraph     : 2.196806
+      NetworkX MultiDiGraph: 4.013438
+    Building a fully-connected 10-node graph 10000 times:
+      MiniGraph            : 1.093164
+      NetworkX DiGraph     : 2.926608
+      NetworkX MultiDiGraph: 6.246929
+
+A good start, but there's more work to do.
 
 [NetworkX]: https://networkx.github.io/
 [graph-tool]: https://graph-tool.skewed.de/
