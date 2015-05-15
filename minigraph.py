@@ -1,5 +1,9 @@
 
 import warnings
+from collections import namedtuple, defaultdict
+
+#Node = namedtuple('Node', ('id', 'data', 'edges', 'in_edges'))
+#Edge = namedtuple('Edge', ('start', 'end', 'label', 'data', 'directed'))
 
 class MiniGraphError(Exception): pass
 class MiniGraphWarning(Warning): pass
@@ -8,24 +12,45 @@ class MiniGraphWarning(Warning): pass
 
 class MiniGraph(object):
 
-    __slots__ = ('nodes', 'edges', '_edges', 'uedges')
+    __slots__ = ('_graph',)
 
     def __init__(self, nodes=None, edges=None):
 
+        self._graph = {}
         # nodes
-        self.nodes = {}
-        for node in (nodes or []):
-            try:
-                node, data = node
-            except TypeError:
-                data = {}
-            self.add_node(node, data=data)
-
+        if nodes is None:
+            nodes = {}
+        self.add_nodes(nodes)
         # edges
-        self.edges = {}  # directed edges
-        self._edges = {}  # cache for reverse-lookup of directed edges
-        self.uedges = {}  # undirected edges
-        self.add_edges(edges or [])
+        if edges is None:
+            edges = {}
+        self.add_edges(edges)
+
+    @classmethod
+    def fast_init(cls, nodes=None, edges=None):
+        """
+        Initializes the graph without argument checking of edges, which
+        means that all edges must be 5-tuples of:
+          (start, end, label, data, directed)
+        """
+        mg = cls(nodes)
+        if edges is not None:
+            mg._fast_add_edges1(edges)
+        return mg
+
+    @classmethod
+    def fast_init2(cls, nodes, edges=None):
+        """
+        Initializes the graph without argument checking of edges, which
+        means that all edges must be 5-tuples of:
+          (start, end, label, data, directed)
+        Furthermore, all edges must only uses nodes specified in the
+        nodes argument.
+        """
+        mg = cls(nodes)
+        if edges is not None:
+            mg._fast_add_edges2(edges)
+        return mg
 
     def __getitem__(self, idx):
         """
@@ -48,95 +73,248 @@ class MiniGraph(object):
             return (idx, self.nodes[idx])
 
     def add_node(self, nodeid, data=None):
-        if nodeid in self.nodes:
-            raise MiniGraphError('Node already exists: {}'.format(nodeid))
-        self.nodes[nodeid] = dict(data or [])
+        # if nodeid in self.nodes:
+        #     raise MiniGraphError('Node already exists: {}'.format(nodeid))
+        #self.nodes[nodeid] = dict(data or [])
+        if data is None:
+            data = {}
+        if nodeid in self._graph:
+            self._graph[nodeid][1].update(data)
+        else:
+            self._graph[nodeid] = (nodeid, data, {}, {})
+
+    def add_nodes(self, nodes):
+        for node in nodes:
+            try:
+                node, data = node
+            except TypeError:
+                data = {}
+            self.add_node(node, data=data)
 
     def remove_node(self, nodeid):
-        self.nodes[nodeid]  # check for KeyError
-        _prune_edges(self, nodeid)
-        del self.nodes[nodeid]
+        g = self._graph
+        if nodeid not in g:
+            raise KeyError(nodeid)
+        _prune_edges(g, nodeid)
+        del g[nodeid]
 
-    def node(self, key):
-        return self.nodes[key]
+    def node(self, nodeid):
+        return self._graph[nodeid]
+
+    def nodes(self):
+        return [(nid, n[1]) for nid, n in self._graph.items()]
 
     def add_edge(self, start, end, label=None, data=None, directed=True):
         self.add_edges([(start, end, label, data, directed)])
 
+    #@profile
     def add_edges(self, edges):
-        nodes = self.nodes
+        g = self._graph
+        add_edge = _add_edge
 
         for edge in edges:
             edgelen = len(edge)
             if edgelen == 5:
-                start, end, label, dat, directed = edge
-            elif edgelen == 4:
-                start, end, label, dat = edge; directed = True
-            elif edgelen == 3:
-                start, end, label = edge; dat = None; directed = True
+                start, end, label, data, directed = edge
             elif edgelen == 2:
-                start, end = edge; label = dat = None; directed = True
+                start, end = edge; label = data = None; directed = True
+            elif edgelen == 4:
+                start, end, label, data = edge; directed = True
+            elif edgelen == 3:
+                start, end, label = edge; data = None; directed = True
             else:
                 raise MiniGraphError('Invalid edge: {}'.format(edge))
 
-            data = {}
-            if dat is not None:
-                data.update(dat)
+            if data is None: data = {}
+            if start not in g: g[start] = (start, {}, {}, {})
+            if end not in g: g[end] = (end, {}, {}, {})
 
-            if start not in nodes:
-                nodes[start] = {}
-            if end not in nodes:
-                nodes[end] = {}
+            e = (start, end, label, data, directed)
 
-            # directed edges have a reverse lookup; undirected edges just put
-            # each edge in the same dict twice
+            #add_edge(g[start][2], label, end, e)
+            d = g[start][2]
+            if label not in d:
+                d[label] = innerdict = {}
+            else:
+                innerdict = d[label]
+            if end not in innerdict:
+                innerdict[end] = e
+            else:
+                if innerdict[end][4] != e[4]:
+                    raise MiniGraphError(
+                        'Cannot update directed and undirected edges.'
+                    )
+                innerdict[end][3].update(e[3])
+
+            
+            #add_edge(g[end][3], label, start, e)
+            d = g[end][3]
+            if label not in d:
+                d[label] = innerdict = {}
+            else:
+                innerdict = d[label]
+            if start not in innerdict:
+                innerdict[start] = e
+            else:
+                if innerdict[start][4] != e[4]:
+                    raise MiniGraphError(
+                        'Cannot update directed and undirected edges.'
+                    )
+                innerdict[start][3].update(e[3])
+
             if directed is False:
-                edges = self.uedges
-                redges = self.uedges
-            else:
-                edges = self.edges
-                redges = self._edges
-
-            if start not in edges:
-                edges[start] = {label: {end: data}}
-            else:
-                startdict = edges[start]
-                if label not in startdict:
-                    startdict[label] = {end: data}
+                #add_edge(g[end][2], label, start, e)
+                d = g[end][2]
+                if label not in d:
+                    d[label] = innerdict = {}
                 else:
-                    startdict[label][end] = data
-
-            if end not in redges:
-                redges[end] = {label: {start: data}}
-            else:
-                enddict = redges[end]
-                if label not in enddict:
-                    enddict[label] = {start: data}
+                    innerdict = d[label]
+                if start not in innerdict:
+                    innerdict[start] = e
                 else:
-                    enddict[label][start] = data
+                    if innerdict[start][4] != e[4]:
+                        raise MiniGraphError(
+                            'Cannot update directed and undirected edges.'
+                        )
+                    innerdict[start][3].update(e[3])
 
-    def remove_edge(self, start, end, label=None, directed=True):
-        # first check for KeyError
-        if directed:
-            self.edges[start][label][end]
-        else:
-            self.uedges[start][label][end]
-        # now attempt to remove
+                #add_edge(g[start][3], label, end, e)
+                d = g[start][3]
+                if label not in d:
+                    d[label] = innerdict = {}
+                else:
+                    innerdict = d[label]
+                if end not in innerdict:
+                    innerdict[end] = e
+                else:
+                    if innerdict[end][4] != e[4]:
+                        raise MiniGraphError(
+                            'Cannot update directed and undirected edges.'
+                        )
+                    innerdict[end][3].update(e[3])
+
+    def _fast_add_edges1(self, edges):
+        g = self._graph
+        add_edge = _add_edge
+
+        for e in edges:
+            start = e[0]
+            end = e[1]
+            label = e[2]
+            directed = e[4]
+            if start not in g:
+                g[start] = (start, {}, {}, {})
+            if end not in g:
+                g[end] = (end, {}, {}, {})
+
+            #add_edge(g[start][2], label, end, e)
+            d = g[start][2]
+            if label not in d:
+                d[label] = innerdict = {}
+            else:
+                innerdict = d[label]
+            if end not in innerdict:
+                innerdict[end] = e
+            else:
+                if innerdict[end][4] != e[4]:
+                    raise MiniGraphError(
+                        'Cannot update directed and undirected edges.'
+                    )
+                innerdict[end][3].update(e[3])
+
+            
+            #add_edge(g[end][3], label, start, e)
+            d = g[end][3]
+            if label not in d:
+                d[label] = innerdict = {}
+            else:
+                innerdict = d[label]
+            if start not in innerdict:
+                innerdict[start] = e
+            else:
+                if innerdict[start][4] != e[4]:
+                    raise MiniGraphError(
+                        'Cannot update directed and undirected edges.'
+                    )
+                innerdict[start][3].update(e[3])
+
+            if directed is False:
+                #add_edge(g[end][2], label, start, e)
+                d = g[end][2]
+                if label not in d:
+                    d[label] = innerdict = {}
+                else:
+                    innerdict = d[label]
+                if start not in innerdict:
+                    innerdict[start] = e
+                else:
+                    if innerdict[start][4] != e[4]:
+                        raise MiniGraphError(
+                            'Cannot update directed and undirected edges.'
+                        )
+                    innerdict[start][3].update(e[3])
+
+                #add_edge(g[start][3], label, end, e)
+                d = g[start][3]
+                if label not in d:
+                    d[label] = innerdict = {}
+                else:
+                    innerdict = d[label]
+                if end not in innerdict:
+                    innerdict[end] = e
+                else:
+                    if innerdict[end][4] != e[4]:
+                        raise MiniGraphError(
+                            'Cannot update directed and undirected edges.'
+                        )
+                    innerdict[end][3].update(e[3])
+
+    def _fast_add_edges2(self, edges):
+        g = self._graph
+        add_edge = _add_edge
+
+        for e in edges:
+            start = e[0]
+            end = e[1]
+            label = e[2]
+            directed = e[4]
+            add_edge(g[start][2], label, end, e)
+            add_edge(g[end][3], label, start, e)
+            if directed is False:
+                add_edge(g[end][2], label, start, e)
+                add_edge(g[start][3], label, end, e)
+
+    def remove_edge(self, start, end, label=None, directed=None):
+        g = self._graph
+        if start not in g: raise KeyError(start)
+        edges = g[start][2]
+        if label not in edges: raise KeyError(label)
+        if end not in edges[label]: raise KeyError(end)
+        _dir = g[start][2][label][end][4]
+        if directed is not None:
+            assert _dir == directed
+
         try:
-            if directed:
-                del self.edges[start][label][end]
-                _cleanup_edgedict(self.edges, start, label)
-                del self._edges[end][label][start]
-                _cleanup_edgedict(self._edges, end, label)
-            else:
-                del self.uedges[start][label][end]
-                _cleanup_edgedict(self.uedges, start, label)
-                # it's possible for an undirected loop to only have one
-                # entry, so don't remove twice if they are the same
-                if end != start:
-                    del self.uedges[end][label][start]
-                    _cleanup_edgedict(self.uedges, end, label)
+            in_edges = g[end][3]
+            del edges[label][end]
+            if len(edges[label]) == 0:
+                del edges[label]
+            del in_edges[label][start]
+            if len(in_edges[label]) == 0:
+                del in_edges[label]
+            # undirected links are listed twice (except simple loops)
+            if not _dir and start != end:
+                edges = g[end][2]
+                in_edges = g[start][3]
+                del edges[label][start]
+                if len(edges[label]) == 0:
+                    del edges[label]
+                del in_edges[label][end]
+                if len(in_edges[label]) == 0:
+                    del in_edges[label]
+
         except KeyError:
+            raise
             warnings.warn(
                 'Unexpected KeyError while removing {} edge ({}, {}, {})'
                 .format('directed' if directed else 'undirected',
@@ -144,11 +322,21 @@ class MiniGraph(object):
                 MiniGraphWarning
             )
 
-    def edge(self, start, end, label=None, directed=True):
-        if directed:
-            return self.edges[start][label][end]
-        else:
-            return self.uedges[start][label][end]
+    def edge(self, start, end, label=None, directed=None):
+        e = self._graph[start][2][label][end]
+        if directed is not None:
+            assert e[4] == directed
+        return e
+
+    def edges(self):
+        return [e
+            for nid, n in self._graph.items()
+            for ed in n[2].values()
+            for e in ed.values()
+            # only include undirected links from the source node (whatever
+            # the source node was when it was instantiated)
+            if e[4] or e[0] == nid
+        ]
 
     def find_edges(self, start=None, end=None, **kwargs):
         if start is Ellipsis: start = None
@@ -192,52 +380,50 @@ class MiniGraph(object):
         return list(xs)
 
     def order(self):
-        return len(self.nodes)
+        return len(self._graph)
 
     def size(self):
-        return (
-            sum(len(ed)
-                for ld in self.edges.values()
-                for ed in ld.values()) +
-            # undirected edges are in uedges twice, except for undirected
-            # simple loops
-            (sum(1 if e != s else 2
-                 for s, ld in self.uedges.items()
-                 for ed in ld.values()
-                 for e in ed.keys()) / 2)
-        )
+        return len(self.edges())
 
     def degree(self, nodeid):
-        self.nodes[nodeid]  # check for KeyError
-        return _degree(nodeid, [self.edges, self._edges, self.uedges])
+        n = self._graph[nodeid]
+        return (
+            sum(len(ed) for ed in n[2].values()) +
+            len([
+                e for ed in n[3].values() for e in ed.values()
+                # only count undirected edges here if they are simple loops
+                if e[4] or e[0] == e[1]
+            ])
+        )
 
     def out_degree(self, nodeid):
-        self.nodes[nodeid]  # check for KeyError
-        return _degree(nodeid, [self.edges, self.uedges])
+        n = self._graph[nodeid]
+        return sum(len(ed) for ed in n[2].values())
+        # return (
+        #     sum(len(ed) for ed in n[2].values()) +
+        #     len([e  for ed in n[3].values()
+        #             for e in ed.values()
+        #             if e[4] == False and e[0] != e[1]])
+        # )
 
     def in_degree(self, nodeid):
-        self.nodes[nodeid]  # check for KeyError
-        return _degree(nodeid, [self._edges, self.uedges])
+        n = self._graph[nodeid]
+        return sum(len(ed) for ed in n[3].values())
+        # return (
+        #     sum(len(ed) for ed in n[3].values()) +
+        #     len([e  for ed in n[2].values()
+        #             for e in ed.values()
+        #             if e[4] == False and e[0] != e[1]])
+        # )
 
     def subgraph(self, nodeids):
+        g = self._graph
         nidset = set(nodeids)
-        nodes = self.nodes
-        edges = self.edges
-        uedges = self.uedges
-        all_edges = [
-            (start, end, label, ld[end])
-            for start in nodeids
-            for label, ld in edges.get(start, {}).items()
-            for end, edgedata in ld.items() if end in nidset
-        ] + [
-            (start, end, label, ld[end], False)
-            for start in nodeids
-            for label, ld in uedges.get(start, {}).items()
-            for end, edgedata in ld.items() if end in nidset
-        ]
         return MiniGraph(
-            nodes=[(nid, nodes[nid]) for nid in nodeids],
-            edges=all_edges
+            nodes=[(nid, g[nid][1]) for nid in nodeids],
+            edges=[e for start in nodeids
+                     for label, ed in g[start][2].items()
+                     for end, e in ed.items() if end in nidset]
         )
 
     # def connected(self):
@@ -248,41 +434,51 @@ class MiniGraph(object):
     #         if node not in nodeset:
     #             nodeset.add(node)
 
-def _degree(nodeid, edgedicts):
-    ds = []
-    for d in edgedicts:
-        if nodeid in d:
-            ds.append(d[nodeid])
-    return sum(len(ld) for d in ds for ld in d.values())
+# def _degree(nodeid, edgedicts):
+#     ds = []
+#     for d in edgedicts:
+#         if nodeid in d:
+#             ds.append(d[nodeid])
+#     return sum(len(ld) for d in ds for ld in d.values())
 
 def _prune_edges(graph, nodeid):
-    # for efficiency, I don't use MiniGraph.remove_edge inside the loop
-    es = graph.edges
-    _es = graph._edges
-    ues = graph.uedges
-    for d1, d2, dir_ in ((es, _es, True), (_es, es, True), (ues, ues, False)):
-        if nodeid not in d1:
-            continue
-        for lbl, ld in d1[nodeid].items():
-            for end in ld.keys():
-                if end == nodeid:  # this will get pruned anyway
-                    continue
-                try:
-                    del d2[end][lbl][nodeid]
-                    # can this be moved outside the loop?
-                    _cleanup_edgedict(d2, end, lbl)
-                except KeyError:
-                    warnings.warn(
-                        'Unexpected KeyError while removing {} edge '
-                        '({}, {}, {})'
-                        .format('directed' if dir_ else 'undirected',
-                                nodeid, end, lbl),
-                        MiniGraphWarning
-                    )
-        del d1[nodeid]
+    g = graph[nodeid]
+    # forward links; remove reverse links on ends
+    edict = defaultdict(list)
+    for ed in g[2].values():
+        for e in ed.values():
+            if e[1] != nodeid:  # this will get removed anyway
+                edict[e[1]].append(e)
+    for end, es in edict.items():
+        ld = graph[end][3]
+        for e in es:
+            del ld[e[2]][e[0]]
+            if len(ld[e[2]]) == 0:
+                del ld[e[2]]
+    # backward links; remove forward links on starts
+    edict = defaultdict(list)
+    for ed in g[3].values():
+        for e in ed.values():
+            if e[0] != nodeid:  # this will get removed anyway
+                edict[e[0]].append(e)
+    for start, es in edict.items():
+        ld = graph[start][2]
+        for e in es:
+            del ld[e[2]][e[1]]
+            if len(ld[e[2]]) == 0:
+                del ld[e[2]]
 
-def _cleanup_edgedict(edgedict, start, label):
-    if len(edgedict[start][label]) == 0:
-        del edgedict[start][label]
-    if len(edgedict[start]) == 0:
-        del edgedict[start]
+# for a bit more speed, this can be inlined directly
+def _add_edge(d, label, idx, e):
+    if label not in d:
+        d[label] = innerdict = {}
+    else:
+        innerdict = d[label]
+    if idx not in innerdict:
+        innerdict[idx] = e
+    else:
+        if innerdict[idx][4] != e[4]:
+            raise MiniGraphError(
+                'Cannot update directed and undirected edges.'
+            )
+        innerdict[idx][3].update(e[3])

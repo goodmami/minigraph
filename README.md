@@ -35,18 +35,27 @@ Consider some of the existing Python libraries for graphs:
 I compared MiniGraph to NetworkX. It's not directly comparable, because
 the single MiniGraph class can be like NetworkXs Graph, DiGraph,
 MultiGraph, and MultiDiGraph classes. Because of this, I compare it to
-several of them. Here's the current state (times are in seconds):
+all of them. Here's the current state (times are in seconds):
 
     Building a chain of 100 nodes 10000 times:
-      MiniGraph (directed) : 1.202720
-      MiniGraph (undir)    : 0.825911
-      NetworkX Graph       : 1.808235
-      NetworkX DiGraph     : 2.196806
-      NetworkX MultiDiGraph: 4.013438
+      MiniGraph (regular   ) : 2.078411
+      MiniGraph (fast_init ) : 1.903894
+      NetworkX Graph         : 2.422691
+      NetworkX DiGraph       : 3.009594
+      NetworkX MultiGraph  : 4.788977
+      NetworkX MultiDiGraph  : 5.369203
     Building a fully-connected 10-node graph 10000 times:
-      MiniGraph            : 1.093164
-      NetworkX DiGraph     : 2.926608
-      NetworkX MultiDiGraph: 6.246929
+      MiniGraph (regular   ) : 1.174832
+      MiniGraph (fast_init ) : 1.014850
+      NetworkX Graph     : 1.749765
+      NetworkX DiGraph     : 1.912611
+      NetworkX MultiGraph: 4.029920
+      NetworkX MultiDiGraph: 4.320380
+    Building a 4x-connected 5x5-node graph 10000 times:
+      MiniGraph (regular   ) : 1.068538
+      MiniGraph (fast_init ) : 0.902589
+      NetworkX MultiGraph: 3.878337
+      NetworkX MultiDiGraph: 4.003757
 
 A good start, but there's more work to do.
 
